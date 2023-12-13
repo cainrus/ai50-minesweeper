@@ -10,6 +10,9 @@ def flat_map(f, xs):
     return ys
 
 
+def is_subset(cells1: set[int], cells2: set[int]):
+    return all(i in cells1 for i in cells2) or all(i in cells2 for i in cells1)
+
 class Minesweeper():
     """
     Minesweeper game representation
@@ -100,7 +103,6 @@ class Sentence():
     """
 
     def __init__(self, cells, count):
-        self.center = cells[0]
         self.cells = set(cells)
         self.count = count
 
@@ -112,18 +114,18 @@ class Sentence():
 
     def known_mines(self):
         """
-        Returns the set of all cells in self.cells known to be mines.
+        Returns the set of all cells in `self.cells` known to be mines.
         """
         if len(self.cells) == self.count:
-            return set(self.cells)
+            return self.cells.copy()
         return set()
 
     def known_safes(self):
         """
-        Returns the set of all cells in self.cells known to be safe.
+        Returns the set of all cells in `self.cells` known to be safe.
         """
         if self.count == 0:
-            return set(self.cells)
+            return self.cells.copy()
         return set()
 
     def mark_mine(self, cell):
@@ -162,56 +164,64 @@ class MinesweeperAI():
         self.mines = set()
         self.safes = set()
 
-        
         # List of sentences about the game known to be true
         self.knowledge = []
 
 
-        self.board_cells = set()
-        self.unrevealed_knowledge = []
+        self.free_cells = []
         for i in range(self.height):
             for j in range(self.width):
-                self.board_cells.add((i, j))
-                self.unrevealed_knowledge.append(self.create_knowledge((i, j), 8))
+                self.free_cells.append((i, j))
 
 
 
     def rebuild_all_knowledge(self):
+        print("rebuild_all_knowledge")
+        print("=====================")
+        removable = []
         for knowledge in self.knowledge:
             mines = knowledge.known_mines()
-            if len(mines):
+            if mines:
+                print("detected mines knowledge", knowledge)
                 for mine in mines:
                     if mine not in self.mines:
                         self.mines.add(mine)
-                knowledge.count = 0
+                removable.append(knowledge)
+                continue
             safes = knowledge.known_safes()
-            for safe in safes:
-                if safe not in self.safes:
-                    self.safes.add(safe)
-            knowledge.count = 0
-        self.knowledge = [knowledge for knowledge in self.knowledge if knowledge.count > 0]
+            if safes:
+                print("detected safe knowledge", knowledge)
+                for safe in safes:
+                    if safe not in self.safes:
+                        self.mark_safe(safe)
+                removable.append(knowledge)
+        for knowledge in removable:
+            self.knowledge.remove(knowledge)
+        print("known mines", self.mines)
 
     def mark_mine(self, cell):
         """
         Marks a cell as a mine, and updates all knowledge
         to mark that cell as a mine as well.
         """
+        if cell in self.mines:
+            return
+        print("mark_mine", cell)
         self.mines.add(cell)
-        for knowledge in self.knowledge:
-            knowledge.mark_mine(cell)
-        for knowledge in self.unrevealed_knowledge:
-            knowledge.mark_mine(cell)
+        for sentence in self.knowledge:
+            sentence.mark_mine(cell)
 
     def mark_safe(self, cell):
         """
         Marks a cell as safe, and updates all knowledge
         to mark that cell as safe as well.
         """
+        if cell in self.safes:
+            return
+        print("mark_safe", cell)
         self.safes.add(cell)
-        for knowledge in self.knowledge:
-            knowledge.mark_safe(cell)
-        for knowledge in self.unrevealed_knowledge:
-            knowledge.mark_safe(cell)
+        for sentence in self.knowledge:
+            sentence.mark_safe(cell)
 
     def normalize_knowledge(self, knowledge: Sentence):
         for mine in self.mines:
@@ -222,32 +232,19 @@ class MinesweeperAI():
 
     def create_knowledge(self, cell, count):
         x, y = cell
-        cells = [cell]
+        adjoined_cells = []
         for i in range(max(0, x - 1), min(self.height, x + 2)):
             for j in range(max(0, y - 1), min(self.width, y + 2)):
                 adjoined_cell = (i, j)
-                if adjoined_cell != cell and adjoined_cell not in self.safes and adjoined_cell not in self.mines:
-                    cells.append(adjoined_cell)
-        # if count == 0:
-        #     print("mark as safe", cells)
-        #     for adjoined_cell in cells:
-        #         self.mark_safe(adjoined_cell)
-        #     return None
-
-        knowledge = self.normalize_knowledge(Sentence(cells, count))
-        return None if knowledge.cells == 0 else knowledge
-
-    def splice_unrevealed_knowledge(self, cell: (int, int)):
-        for knowledge in self.unrevealed_knowledge:
-            if knowledge.center == cell:
-                self.unrevealed_knowledge.remove(knowledge)
-                return knowledge
-        raise IndexError
-
-    def is_actual_knowledge(self, knowledge: Sentence):
-        if knowledge is not None and knowledge not in self.knowledge:
-            return True
-        return False
+                if adjoined_cell == cell:
+                    continue
+                # if adjoined_cell in self.safes:
+                #     continue
+                # if adjoined_cell in self.mines:
+                #     continue
+                adjoined_cells.append((i, j))
+        knowledge = self.normalize_knowledge(Sentence(adjoined_cells, count))
+        return knowledge
 
     def add_knowledge(self, cell, count):
         """
@@ -268,26 +265,39 @@ class MinesweeperAI():
         self.moves_made.add(cell)
         self.mark_safe(cell)
 
-        current_knowledge = self.splice_unrevealed_knowledge(cell)
-        current_knowledge.count = count
+        current_knowledge = self.create_knowledge(cell, count)
+        print("current_knowledge", current_knowledge)
 
-        if self.is_actual_knowledge(current_knowledge):
-            synthesised_knowledge = self.synthesise_knowledge(current_knowledge)
-            self.knowledge.append(current_knowledge)
+        if current_knowledge.count:
+            if current_knowledge not in self.knowledge:
+                synthesised_knowledge = self.synthesise_knowledge(current_knowledge)
+                self.knowledge.append(current_knowledge)
 
-            for knowledge in synthesised_knowledge:
-                if knowledge not in self.knowledge:
-                    self.knowledge.append(knowledge)
+                for knowledge in synthesised_knowledge:
+                    if knowledge not in self.knowledge:
+                        self.knowledge.append(knowledge)
+        else:
+            for cell in current_knowledge.cells:
+                self.mark_safe(cell)
 
         self.rebuild_all_knowledge()
 
+
     def synthesise_knowledge(self, current_knowledge: Sentence):
         synthesised_knowledge = []
+        current_knowledge_cells = set(current_knowledge.cells)
         for knowledge in self.knowledge:
-            intersected = knowledge.cells.intersection(current_knowledge.cells)
-            if intersected:
-                intersection_knowledge = Sentence(intersected, current_knowledge.count - knowledge.count)
-                synthesised_knowledge.append(intersection_knowledge)
+            if is_subset(knowledge.cells, current_knowledge.cells):
+                cells_difference = [x for x in knowledge.cells if x not in current_knowledge_cells]
+                if cells_difference:
+                    print("difference")
+                    print("==========")
+                    print("* knowledge",  knowledge)
+                    print("* current_knowledge", current_knowledge)
+                    difference_knowledge = Sentence(cells_difference, abs(current_knowledge.count - knowledge.count))
+                    print('> new knowledge:', difference_knowledge)
+                    synthesised_knowledge.append(difference_knowledge)
+
         return synthesised_knowledge
 
     def make_safe_move(self):
@@ -313,34 +323,34 @@ class MinesweeperAI():
             1) have not already been chosen, and
             2) are not known to be mines
         """
-
-        unknown_cells = list(self.board_cells.difference(self.moves_made, self.mines))
-        length = len(unknown_cells)
+        free_cells = []
+        for cell in self.free_cells:
+            if cell not in self.mines and cell not in self.moves_made:
+                free_cells.append(cell)
+        length = len(free_cells)
         if length == 0:
             return None
-
-        random.shuffle(unknown_cells)
 
         if self.knowledge:
             def get_cells(sentence: Sentence):
                 return sentence.cells
 
             dangerous_cells = flat_map(get_cells, self.knowledge)
-            for unknown_cell in unknown_cells:
-                if unknown_cell not in dangerous_cells:
+            for free_cell in free_cells:
+                if free_cell not in self.moves_made and free_cell not in dangerous_cells:
                     # Return first possible 0 mines cell.
-                    print("skipped dangerous and found unknown cell", unknown_cell)
-                    return unknown_cell
+                    print("skipped dangerous and found unknown cell", free_cell)
+                    return free_cell
 
             # Return first cell with less possible mines.
             sorted_knowledge = sorted(self.knowledge, key=attrgetter('count'))
-            safest_cells = list(sorted_knowledge[0].cells)
+            safest_cells = sorted_knowledge[0].cells
             index = random.randrange(len(safest_cells))
-            dangerous_cell = safest_cells[index]
+            dangerous_cell = list(safest_cells)[index]
             print("found dangerous cell", dangerous_cell)
             return dangerous_cell
         else:
             index = random.randrange(length)
-            unknown_cell = unknown_cells[index]
+            unknown_cell = free_cells[index]
             print("found random unknown cell", unknown_cell)
             return unknown_cell
