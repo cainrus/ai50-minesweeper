@@ -1,7 +1,5 @@
-import itertools
 import random
 from operator import attrgetter
-
 
 def flat_map(f, xs):
     ys = []
@@ -11,7 +9,7 @@ def flat_map(f, xs):
 
 
 def is_subset(cells1: set[int], cells2: set[int]):
-    return all(i in cells1 for i in cells2) or all(i in cells2 for i in cells1)
+    return cells1.issubset(cells2) or cells2.issubset(cells1)
 
 class Minesweeper():
     """
@@ -168,21 +166,20 @@ class MinesweeperAI():
         self.knowledge = []
 
 
-        self.free_cells = []
+        self.board_cells = []
         for i in range(self.height):
             for j in range(self.width):
-                self.free_cells.append((i, j))
+                self.board_cells.append((i, j))
 
 
 
     def rebuild_all_knowledge(self):
-        print("rebuild_all_knowledge")
-        print("=====================")
+        changes_made = False  # Track if any changes are made
+
         removable = []
         for knowledge in self.knowledge:
             mines = knowledge.known_mines()
             if mines:
-                print("detected mines knowledge", knowledge)
                 for mine in mines:
                     if mine not in self.mines:
                         self.mines.add(mine)
@@ -190,14 +187,14 @@ class MinesweeperAI():
                 continue
             safes = knowledge.known_safes()
             if safes:
-                print("detected safe knowledge", knowledge)
                 for safe in safes:
                     if safe not in self.safes:
                         self.mark_safe(safe)
                 removable.append(knowledge)
         for knowledge in removable:
             self.knowledge.remove(knowledge)
-        print("known mines", self.mines)
+        if changes_made:
+            self.rebuild_all_knowledge()
 
     def mark_mine(self, cell):
         """
@@ -206,7 +203,6 @@ class MinesweeperAI():
         """
         if cell in self.mines:
             return
-        print("mark_mine", cell)
         self.mines.add(cell)
         for sentence in self.knowledge:
             sentence.mark_mine(cell)
@@ -218,7 +214,6 @@ class MinesweeperAI():
         """
         if cell in self.safes:
             return
-        print("mark_safe", cell)
         self.safes.add(cell)
         for sentence in self.knowledge:
             sentence.mark_safe(cell)
@@ -238,10 +233,6 @@ class MinesweeperAI():
                 adjoined_cell = (i, j)
                 if adjoined_cell == cell:
                     continue
-                # if adjoined_cell in self.safes:
-                #     continue
-                # if adjoined_cell in self.mines:
-                #     continue
                 adjoined_cells.append((i, j))
         knowledge = self.normalize_knowledge(Sentence(adjoined_cells, count))
         return knowledge
@@ -266,7 +257,6 @@ class MinesweeperAI():
         self.mark_safe(cell)
 
         current_knowledge = self.create_knowledge(cell, count)
-        print("current_knowledge", current_knowledge)
 
         if current_knowledge.count:
             if current_knowledge not in self.knowledge:
@@ -282,20 +272,17 @@ class MinesweeperAI():
 
         self.rebuild_all_knowledge()
 
-
     def synthesise_knowledge(self, current_knowledge: Sentence):
         synthesised_knowledge = []
         current_knowledge_cells = set(current_knowledge.cells)
         for knowledge in self.knowledge:
+            if knowledge.cells.isdisjoint(current_knowledge.cells):
+                continue  # Skip if there is no overlap in cells
+
             if is_subset(knowledge.cells, current_knowledge.cells):
                 cells_difference = [x for x in knowledge.cells if x not in current_knowledge_cells]
                 if cells_difference:
-                    print("difference")
-                    print("==========")
-                    print("* knowledge",  knowledge)
-                    print("* current_knowledge", current_knowledge)
                     difference_knowledge = Sentence(cells_difference, abs(current_knowledge.count - knowledge.count))
-                    print('> new knowledge:', difference_knowledge)
                     synthesised_knowledge.append(difference_knowledge)
 
         return synthesised_knowledge
@@ -312,7 +299,6 @@ class MinesweeperAI():
 
         for item in self.safes:
             if item not in self.moves_made:
-                print("found safe", item)
                 return item
         return None
 
@@ -323,12 +309,12 @@ class MinesweeperAI():
             1) have not already been chosen, and
             2) are not known to be mines
         """
-        free_cells = []
-        for cell in self.free_cells:
-            if cell not in self.mines and cell not in self.moves_made:
-                free_cells.append(cell)
-        length = len(free_cells)
-        if length == 0:
+
+        board_cells_set = set(self.board_cells)
+        free_cells = list(board_cells_set - self.mines - self.moves_made)
+        free_cells_count = len(free_cells)
+
+        if free_cells_count == 0:
             return None
 
         if self.knowledge:
@@ -339,7 +325,6 @@ class MinesweeperAI():
             for free_cell in free_cells:
                 if free_cell not in self.moves_made and free_cell not in dangerous_cells:
                     # Return first possible 0 mines cell.
-                    print("skipped dangerous and found unknown cell", free_cell)
                     return free_cell
 
             # Return first cell with less possible mines.
@@ -347,10 +332,8 @@ class MinesweeperAI():
             safest_cells = sorted_knowledge[0].cells
             index = random.randrange(len(safest_cells))
             dangerous_cell = list(safest_cells)[index]
-            print("found dangerous cell", dangerous_cell)
             return dangerous_cell
         else:
-            index = random.randrange(length)
+            index = random.randrange(free_cells_count)
             unknown_cell = free_cells[index]
-            print("found random unknown cell", unknown_cell)
             return unknown_cell
